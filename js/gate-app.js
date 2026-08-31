@@ -43,7 +43,14 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
    exact scroll/camera score, but give primary-touch devices a saner render
    budget. Change this one predicate to false for a direct quality A/B. */
 const MOBILE_RENDER_BUDGET = matchMedia('(hover:none) and (pointer:coarse)').matches;
-const RENDER_DPR_CAP = MOBILE_RENDER_BUDGET ? 1.35 : 1.75;
+const MOBILE_QUALITY_BASELINE = MOBILE_RENDER_BUDGET &&
+  new URLSearchParams(location.search).get('mq') === 'baseline';
+/* The product needs more mobile edge definition than the original 1.35 cap,
+   while 1.75 plus 4x MSAA is too costly for sustained scroll. At 1.55 the
+   canvas carries about 32% more pixels; retain dependable 2x MSAA because a
+   nominal 3x sample count is not portable across mobile WebGL drivers. The
+   mq=baseline comparison switch leaves normal visitors on the 1.55 default. */
+const RENDER_DPR_CAP = MOBILE_RENDER_BUDGET ? (MOBILE_QUALITY_BASELINE ? 1.35 : 1.55) : 1.75;
 const MOBILE_IDLE_ATMOSPHERE_FPS = 18;
 const MOBILE_IDLE_ATMOSPHERE_MS = 1000 / MOBILE_IDLE_ATMOSPHERE_FPS;
 /* Lenis smooths the WHEEL itself — browsers deliver it in ~100 px notches, and
@@ -838,6 +845,7 @@ composer.renderTarget1.samples = COMPOSER_SAMPLES;
 composer.renderTarget2.samples = COMPOSER_SAMPLES;
 window.__renderProfile = {
   mobile: MOBILE_RENDER_BUDGET, dprCap: RENDER_DPR_CAP, samples: COMPOSER_SAMPLES,
+  quality: MOBILE_RENDER_BUDGET ? (MOBILE_QUALITY_BASELINE ? 'baseline' : 'midpoint') : 'desktop',
   idleAtmosphereFps: MOBILE_RENDER_BUDGET ? MOBILE_IDLE_ATMOSPHERE_FPS : 60,
 };
 composer.addPass(new RenderPass(scene, camera));
