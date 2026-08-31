@@ -97,6 +97,26 @@
   #stage { position:sticky; top:0; height:100svh; overflow:hidden; background:#000;
     touch-action:pan-y pinch-zoom; }
   #stage canvas { position:absolute; inset:0; z-index:0; }
+  /* Keep incomplete WebGL geometry out of view while the first gate is decoded
+     and composed. The actual scene settles underneath, then replaces this
+     lightweight cover in one soft reveal. */
+  #stage-loader { position:absolute; inset:0; z-index:50; display:grid; place-items:center;
+    background:
+      radial-gradient(ellipse 70% 46% at 50% 58%, rgba(45,49,57,.28), transparent 72%),
+      #050608;
+    opacity:1; visibility:visible; pointer-events:none;
+    transition:opacity .5s ease, visibility 0s linear .5s; }
+  #stage-loader.ready { opacity:0; visibility:hidden; pointer-events:none; }
+  .stage-loader-inner { display:flex; flex-direction:column; align-items:center; gap:14px; }
+  .stage-loader-mark { width:44px; height:1px; overflow:hidden;
+    background:rgba(242,240,236,.16); }
+  .stage-loader-mark::after { content:''; display:block; width:48%; height:100%;
+    background:var(--brand2); animation:gate-load 1.15s cubic-bezier(.4,0,.2,1) infinite; }
+  .stage-loader-copy { font-size:9px; letter-spacing:.28em; color:rgba(242,240,236,.58); }
+  @keyframes gate-load {
+    from { transform:translateX(-110%); }
+    to { transform:translateX(220%); }
+  }
   .vignette { position:absolute; inset:0; z-index:2; pointer-events:none;
     background:radial-gradient(120% 90% at 50% 42%, transparent 38%, rgba(0,0,0,.55) 100%); }
   .grain { position:absolute; inset:0; z-index:2; pointer-events:none; opacity:.16;
@@ -307,29 +327,24 @@
      rides overall progress beside the bar, click to travel. */
   #stimeline { position:fixed; right:26px; top:50%; transform:translateY(-50%);
     height:72vh; z-index:55; display:flex; flex-direction:column; gap:7px;
-    opacity:0; transition:opacity .45s; pointer-events:none; }
+    opacity:0; transition:opacity .45s; pointer-events:none;
+    /* Per-pixel contrast keeps the rail legible while the circular frost edge
+       crosses it; it no longer needs to disappear at Contact. */
+    mix-blend-mode:difference; }
   #stimeline.on { opacity:1; }
-  #stimeline .stseg { position:relative; width:2px; background:rgba(242,240,236,.14);
+  #stimeline .stseg { position:relative; width:2px; background:rgba(255,255,255,.20);
     transform-origin:center; transition:transform .35s cubic-bezier(.4,0,.2,1), background .45s; }
   #stimeline .stseg:nth-of-type(1) { flex:.46; }
   #stimeline .stseg:nth-of-type(2) { flex:.32; }
   #stimeline .stseg:nth-of-type(3) { flex:.22; }
   #stimeline.on .stseg { pointer-events:auto; cursor:pointer; }
-  #stimeline.tail #stlabel { opacity:0; }
-  /* Once the contact sheet seals, the journey is complete. Removing the rail
-     keeps it from reading as a stray right-hand border on the light layout. */
-  #stimeline.tail { opacity:0; pointer-events:none; }
-  #stimeline.tail .stseg { pointer-events:none; }
   #stimeline .stseg::before { content:''; position:absolute; inset:0 -11px; }
   #stimeline .stseg:hover { transform:scaleX(3); }
   #stimeline .stseg i { position:absolute; top:0; left:0; width:100%; height:0%;
-    background:var(--ink); display:block; transition:background .45s; }
+    background:#fff; display:block; transition:background .45s; }
   .stlabel { position:absolute; right:calc(100% + 12px); top:0;
-    font-size:9px; color:rgba(242,240,236,.6); white-space:nowrap;
+    font-size:9px; color:rgba(255,255,255,.68); white-space:nowrap;
     transition:color .45s; }
-  #stimeline.light .stseg { background:rgba(22,24,28,.16); }
-  #stimeline.light .stseg i { background:#16181c; }
-  #stimeline.light .stlabel { color:rgba(22,24,28,.55); }
   @media (orientation:portrait), (max-width:760px){ #stimeline{ display:none; } }
 
   /* the after-film bands: ordinary scroll, same voice as the beats */
@@ -784,6 +799,8 @@
     #sheetglow{ display:none; }
     section.band.fallback{ display:block; }   /* must outgun the display:none above */
     .scrollcue .rail{ animation:none; }
+    #stage-loader{ transition:none; }
+    .stage-loader-mark::after{ animation:none; transform:none; width:100%; }
   }
 
   /* A real static fallback, not an empty black canvas: initialization and
@@ -803,6 +820,7 @@
   html.runtime-fallback #gateclose,
   html.runtime-fallback #sheetglow,
   html.runtime-fallback #draghint,
+  html.runtime-fallback #stage-loader,
   html.runtime-fallback #stimeline { display:none !important; }
   html.runtime-fallback #b1 { opacity:1 !important; pointer-events:auto;
     transform:translate(0,-50%) !important; }
@@ -816,7 +834,7 @@
   #stage { background:
     linear-gradient(90deg, rgba(5,6,8,.74), rgba(5,6,8,.20)),
     url('assets/installed-coastal.webp') center/cover no-repeat !important; }
-  #stage canvas, #backdrop, #dock, #gateclose, #sheetglow, #draghint, #stimeline {
+  #stage canvas, #backdrop, #dock, #gateclose, #sheetglow, #draghint, #stage-loader, #stimeline {
     display:none !important;
   }
   #b1 { opacity:1 !important; pointer-events:auto; transform:translate(0,-50%) !important; }
@@ -852,7 +870,13 @@
 </div>
 
 <div id="track">
-  <div id="stage">
+  <div id="stage" aria-busy="true">
+    <div id="stage-loader" role="status" aria-live="polite">
+      <div class="stage-loader-inner">
+        <span class="stage-loader-mark" aria-hidden="true"></span>
+        <span class="mono stage-loader-copy" data-i18n="loading">Preparing the gate</span>
+      </div>
+    </div>
     <div id="backdrop" aria-hidden="true">
       <img id="bd-a" src="assets/installed-coastal.webp" alt="" fetchpriority="low" decoding="async">
       <img id="bd-b" data-src="assets/coastal-night.webp" alt="" fetchpriority="low" decoding="async">
@@ -1418,7 +1442,7 @@
     <div id="draghint" aria-hidden="true">
       <div class="dh-row"><span class="dh-ch">&#8249;</span><span class="dh-hand"><svg width="22" height="22" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10.5 5v7.2l-1.9-1.7c-.7-.65-1.85-.6-2.45.15-.5.65-.45 1.55.15 2.15l4.5 4.7c.6.6 1.4 1 2.3 1h3.2c1.8 0 3.2-1.45 3.2-3.2v-4.1c0-.85-.7-1.55-1.55-1.55-.3 0-.6.1-.85.25-.2-.7-.85-1.2-1.6-1.2-.35 0-.7.1-.95.3-.3-.55-.9-.95-1.55-.95-.3 0-.55.05-.8.2V5c0-.9-.75-1.6-1.6-1.6-.9 0-1.6.7-1.6 1.6z"/></svg></span><span class="dh-ch">&#8250;</span></div>
       <div class="mono dh-t dh-mouse" data-i18n="draghint">Drag to explore</div>
-      <div class="mono dh-t dh-touch" data-i18n="draghint-t">Swipe to explore</div>
+      <div class="mono dh-t dh-touch" data-i18n="draghint-t">Swipe sideways to explore</div>
     </div>
     <div class="scrollcue" id="cue"><span class="mono" data-i18n="cue">Scroll</span><span class="rail"></span></div>
 
@@ -1499,6 +1523,8 @@
   };
   window.__showGateFallback = (message) => {
     document.documentElement.classList.add('runtime-fallback');
+    document.getElementById('stage')?.setAttribute('aria-busy', 'false');
+    document.getElementById('stage-loader')?.classList.add('ready');
     showMessage(message || 'The interactive 3D view is unavailable. The static site and contact information remain available.');
   };
 })();
@@ -1514,12 +1540,24 @@ import { ShaderPass } from './js/post/ShaderPass.js';
 
 try {
 const stage = document.getElementById('stage');
+const stageLoader = document.getElementById('stage-loader');
+let firstGatePresented = false;
+function presentFirstGate() {
+  if (firstGatePresented) return;
+  firstGatePresented = true;
+  /* Let the model receive a fully composed frame before the cover leaves. */
+  requestAnimationFrame(() => requestAnimationFrame(() => {
+    stageLoader.classList.add('ready');
+    stageLoader.setAttribute('aria-hidden', 'true');
+    stage.setAttribute('aria-busy', 'false');
+  }));
+}
 const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
 /* Mobile Safari/Chrome have far less fill-rate than desktop GPUs. Preserve the
    exact scroll/camera score, but give primary-touch devices a saner render
    budget. Change this one predicate to false for a direct quality A/B. */
 const MOBILE_RENDER_BUDGET = matchMedia('(hover:none) and (pointer:coarse)').matches;
-const RENDER_DPR_CAP = MOBILE_RENDER_BUDGET ? 1.35 : 1.75;
+const RENDER_DPR_CAP = MOBILE_RENDER_BUDGET ? 1.20 : 1.75;
 /* Lenis smooths the WHEEL itself — browsers deliver it in ~100 px notches, and
    no amount of downstream easing hides a stepped input entirely. Native-scroll
    mode, so position:sticky and the scroll clock work unchanged; our own p-glide
@@ -1528,7 +1566,9 @@ const lenis = (!reduced && window.Lenis)
   ? new window.Lenis({ autoRaf: false, lerp: 0.12, anchors: true })
   : null;
 
-const renderer = new THREE.WebGLRenderer({ antialias:true, alpha:true, powerPreference:'high-performance' });
+const renderer = new THREE.WebGLRenderer({
+  antialias:!MOBILE_RENDER_BUDGET, alpha:true, powerPreference:'high-performance'
+});
 renderer.setClearAlpha(0);
 renderer.setPixelRatio(Math.min(devicePixelRatio, RENDER_DPR_CAP));
 renderer.toneMapping = THREE.ACESFilmicToneMapping;
@@ -2253,18 +2293,24 @@ function loadComp(i, done, failed = error => reportCompLoadError(i, error)) {
   }));
   gateCache.set(url, pr); pr.then(done).catch(failed);
 }
-loadComp(0, (rec) => { installGate(rec); buildChips(); buildCompChips(); buildGlassChips(); window.__syncChipLang?.(); });
+loadComp(0, (rec) => {
+  installGate(rec); buildChips(); buildCompChips(); buildGlassChips();
+  window.__syncChipLang?.();
+  presentFirstGate();
+});
 
 /* ---- bloom: glow only on the brightest specular hits ---- */
 const composer = new EffectComposer(renderer);
-const COMPOSER_SAMPLES = MOBILE_RENDER_BUDGET ? 2 : 4;
+const COMPOSER_SAMPLES = MOBILE_RENDER_BUDGET ? 0 : 4;
 composer.renderTarget1.samples = COMPOSER_SAMPLES;
 composer.renderTarget2.samples = COMPOSER_SAMPLES;
 window.__renderProfile = {
   mobile: MOBILE_RENDER_BUDGET, dprCap: RENDER_DPR_CAP, samples: COMPOSER_SAMPLES,
+  postprocessing: !MOBILE_RENDER_BUDGET,
 };
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(1,1), 0.16, 0.45, 0.95);
+bloom.enabled = !MOBILE_RENDER_BUDGET;
 composer.addPass(bloom);
 composer.addPass(new OutputPass());
 /* the unifier: fine animated grain + a gentle vignette, applied after tone
@@ -2312,7 +2358,22 @@ let cueVis = null, lastHeroUI = -1, lastStuck = null, renderFor = 90;
 const ndip = document.getElementById('nightdip');
 const dock = document.getElementById('dock');
 const dtog = document.getElementById('docktoggle');
-dtog.onclick = () => dtog.setAttribute('aria-expanded', dock.classList.toggle('open'));
+function setDockOpen(open) {
+  dock.classList.toggle('open', open);
+  dtog.setAttribute('aria-expanded', String(open));
+}
+dtog.addEventListener('click', () => setDockOpen(!dock.classList.contains('open')));
+/* On compact layouts the dock behaves like a popover: an outside touch/click
+   and Escape both return the visitor to the scene. */
+document.addEventListener('pointerdown', event => {
+  if (dock.classList.contains('open') && !dock.contains(event.target)) setDockOpen(false);
+}, { passive:true });
+document.addEventListener('keydown', event => {
+  if (event.key === 'Escape' && dock.classList.contains('open')) {
+    setDockOpen(false);
+    dtog.focus({ preventScroll:true });
+  }
+});
 let lastDock = -1;
 const gateclose = document.getElementById('gateclose'),
       leafL = document.getElementById('leafL'), leafR = document.getElementById('leafR'),
@@ -2447,7 +2508,7 @@ const stl = document.getElementById('stimeline'),
       stLabel = document.getElementById('stlabel'),
       stSegs = [...document.querySelectorAll('#stimeline .stseg')],
       stFills = stSegs.map(el => el.firstElementChild);
-let lastStOn = null, lastStKey = -1, lastStTail = null;
+let lastStOn = null, lastStKey = -1;
 document.querySelectorAll('#stimeline .stseg').forEach(el =>
   el.addEventListener('click', () => {
     const y = parseFloat(el.dataset.goto) * (track.offsetHeight - innerHeight);
@@ -2761,36 +2822,69 @@ addEventListener('mousemove', e => { mx=(e.clientX/innerWidth-.5)*2; my=(e.clien
    keeps its pose while the beat holds. */
 let dragAzT = 0, dragAltT = 0, sDragAz = 0, sDragAlt = 0, dragGain = 0;
 let dragging = false, dragPX = 0, dragPY = 0, dragTravel = 0, lastHint = -1, grabCur = null;
+let dragCandidate = null, dragPointerType = '';
 const draghint = document.getElementById('draghint');
 const dhHand = draghint.querySelector('.dh-hand');
 const dhAmp = matchMedia('(pointer:coarse)').matches ? 13 : 9;
 let swayK = 1, swayCur = 0;
-stage.addEventListener('pointerdown', e => {
-  if (dragGain < 0.05 || e.target.closest('#dock')) return;
-  dragging = true; dragPX = e.clientX; dragPY = e.clientY;
+function beginDrag(e, x = e.clientX, y = e.clientY) {
+  dragging = true; dragPointerType = e.pointerType;
+  dragPX = x; dragPY = y;
   stage.setPointerCapture(e.pointerId);
   stage.style.cursor = 'grabbing';
   e.preventDefault();
+}
+stage.addEventListener('pointerdown', e => {
+  if (dragGain < 0.05 || dock.classList.contains('open') || e.target.closest('#dock')) return;
+  if (e.pointerType === 'mouse' && e.button !== 0) return;
+  if (e.pointerType === 'touch') {
+    /* Do not claim a finger until its intent is clearly horizontal. Vertical
+       movement remains native page scrolling, which removes the old tug-of-war. */
+    dragCandidate = { id:e.pointerId, x:e.clientX, y:e.clientY };
+    return;
+  }
+  beginDrag(e);
 });
 stage.addEventListener('pointermove', e => {
+  if (!dragging && dragCandidate?.id === e.pointerId) {
+    const totalX = e.clientX - dragCandidate.x;
+    const totalY = e.clientY - dragCandidate.y;
+    if (Math.hypot(totalX, totalY) < 9) return;
+    if (Math.abs(totalY) >= Math.abs(totalX) * 0.9) {
+      dragCandidate = null;             // native pan-y keeps ownership
+      return;
+    }
+    const start = dragCandidate;
+    dragCandidate = null;
+    beginDrag(e, start.x, start.y);
+  }
   if (!dragging) return;
   const dx = e.clientX - dragPX, dy = e.clientY - dragPY;
   dragPX = e.clientX; dragPY = e.clientY;
   /* grab metaphor: the surface follows the pointer, so both angles run
      against the drag. Clamps keep the smoke planes and floor honest. */
-  dragAzT  = Math.min(55, Math.max(-55, dragAzT  - dx * 0.22));
-  dragAltT = Math.min(6,  Math.max(-28, dragAltT - dy * 0.16));
+  const touch = dragPointerType === 'touch';
+  dragAzT  = Math.min(55, Math.max(-55, dragAzT - dx * (touch ? 0.34 : 0.22)));
+  /* A touch swipe owns only the horizontal orbit; pitch remains a mouse/pen
+     refinement so diagonal fingers do not fight vertical page movement. */
+  if (!touch) dragAltT = Math.min(6, Math.max(-28, dragAltT - dy * 0.16));
   dragTravel += Math.abs(dx) + Math.abs(dy);
 });
 const endDrag = e => {
+  if (dragCandidate?.id === e.pointerId) dragCandidate = null;
   if (!dragging) return;
   dragging = false;
+  dragPointerType = '';
   try { stage.releasePointerCapture(e.pointerId); } catch {}
   stage.style.cursor = grabCur ? 'grab' : '';
 };
 stage.addEventListener('pointerup', endDrag);
 stage.addEventListener('pointercancel', endDrag);
-window.__drag = { get az(){ return sDragAz; }, get alt(){ return sDragAlt; }, get gain(){ return dragGain; }, get sway(){ return swayCur; } };
+window.__drag = {
+  get az(){ return sDragAz; }, get alt(){ return sDragAlt; },
+  get gain(){ return dragGain; }, get sway(){ return swayCur; },
+  get active(){ return dragging; }, get pending(){ return !!dragCandidate; },
+};
 
 const nav = document.getElementById('nav'), cue = document.getElementById('cue');
 const standfirst = document.getElementById('standfirst'), pcard = document.getElementById('pcard');
@@ -3091,9 +3185,6 @@ function frame(now){
   smokeTime += dt;
   grade.uniforms.uTime.value = smokeTime;
   const live = smokeAlpha > 0.004;
-  /* Preserve the full portrait haze while scrolling, but let it rest after the
-     house resolves on mobile. This cuts idle heat without changing the frame. */
-  const mobileHouseRest = MOBILE_RENDER_BUDGET && portrait && photoK > 0.98;
   for (const L of smokeLayers) L.visible = live;
   if (live) {
     const hv = _mv.set(tx, FLOOR_Y, 0).project(camera).y * 0.5 + 0.5;
@@ -3284,16 +3375,10 @@ function frame(now){
   const navLight = (USING_FROST_BLOB ? closeK > blobNavK : closeK > 0.55) || trackBottom < 70;
   if (navLight !== lastNavLight) {
     nav.classList.toggle('light', navLight);
-    stl.classList.toggle('light', navLight);
     lastNavLight = navLight;
   }
   const stOn = p > 0.02;
   if (stOn !== lastStOn) { lastStOn = stOn; stl.classList.toggle('on', stOn); }
-  /* A vertical rail cannot straddle a circular light/dark boundary cleanly.
-     Noa clears its progress UI as the blob begins, so the blob mode follows
-     that cue; the rollback mode retains the prior sealed-sheet timing. */
-  const stTail = USING_FROST_BLOB ? closeK > 0.08 : swapped;
-  if (stTail !== lastStTail) { lastStTail = stTail; stl.classList.toggle('tail', stTail); }
   const stKey = Math.round(p * 600) * 2 + (document.documentElement.lang === 'es' ? 1 : 0);
   if (stKey !== lastStKey) {
     lastStKey = stKey;
@@ -3311,17 +3396,22 @@ function frame(now){
 
   // idle: nothing moving, so don't burn a composite (keeps thermals down, which
   // is what actually keeps long scrolls smooth on laptops)
-  // smoke animates continuously, so it would pin the compositor on forever once
-  // the hero has scrolled past. Only count it while the stage is actually on screen.
+  // Atmospheric motion is continuous on desktop. On mobile it animates while
+  // scrolling/dragging and briefly afterward, then rests to preserve thermal
+  // headroom for the next gesture.
   const onScreen = trackBottom > 0;
   const moving = dragging || Math.abs(swayCur) > 0.01 || Math.abs(target - p) > 1e-4 ||
                  Math.abs(mx - smx) > 1e-3 || Math.abs(my - smy) > 1e-3 ||
                  Math.abs(dragAzT - sDragAz) > 0.02 || Math.abs(dragAltT - sDragAlt) > 0.02 ||
-                 (smokeAlpha > 0.004 && onScreen && !mobileHouseRest);
+                 (smokeAlpha > 0.004 && onScreen && !MOBILE_RENDER_BUDGET);
   if (moving) renderFor = 45;
   if (renderFor > 0) {
     if (gate && GLASSES[glassIdx][2].blur) renderBg();
-    composer.render(); renderFor--;
+    /* CSS supplies the same restrained grain/vignette on mobile, so skipping
+       the multi-pass bloom chain saves several full-screen GPU passes. */
+    if (MOBILE_RENDER_BUDGET) renderer.render(scene, camera);
+    else composer.render();
+    renderFor--;
   }
   requestAnimationFrame(frame);
 }
@@ -3357,7 +3447,8 @@ requestAnimationFrame(frame);
     'dl-finish':'Acabado',
     'compose':  'Componer',
     'draghint': 'Arrastre para explorar',
-    'draghint-t':'Arrastre para explorar',
+    'draghint-t':'Deslice lateralmente para explorar',
+    'loading':   'Preparando el portón',
     'e-s1':     '05 — En su lugar',
     'h-s1':     'Pertenece<br>a la arquitectura.',
     'p-s1':     'La hoja que usted compuso — mismo vidrio, mismo acabado — instalada en el vano para el que fue diseñada.',
