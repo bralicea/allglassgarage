@@ -44,6 +44,8 @@ const reduced = matchMedia('(prefers-reduced-motion: reduce)').matches;
    budget. Change this one predicate to false for a direct quality A/B. */
 const MOBILE_RENDER_BUDGET = matchMedia('(hover:none) and (pointer:coarse)').matches;
 const RENDER_DPR_CAP = MOBILE_RENDER_BUDGET ? 1.35 : 1.75;
+const MOBILE_IDLE_ATMOSPHERE_FPS = 18;
+const MOBILE_IDLE_ATMOSPHERE_MS = 1000 / MOBILE_IDLE_ATMOSPHERE_FPS;
 /* Lenis smooths the WHEEL itself — browsers deliver it in ~100 px notches, and
    no amount of downstream easing hides a stepped input entirely. Native-scroll
    mode, so position:sticky and the scroll clock work unchanged; our own p-glide
@@ -836,6 +838,7 @@ composer.renderTarget1.samples = COMPOSER_SAMPLES;
 composer.renderTarget2.samples = COMPOSER_SAMPLES;
 window.__renderProfile = {
   mobile: MOBILE_RENDER_BUDGET, dprCap: RENDER_DPR_CAP, samples: COMPOSER_SAMPLES,
+  idleAtmosphereFps: MOBILE_RENDER_BUDGET ? MOBILE_IDLE_ATMOSPHERE_FPS : 60,
 };
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(1,1), 0.16, 0.45, 0.95);
@@ -882,6 +885,7 @@ function setNightGlow(k) {
 }
 
 /* render-loop state — declared before anything can call invalidate() */
+let mobileIdleAtmosphereAt = 0;
 let cueVis = null, lastHeroUI = -1, lastStuck = null, renderFor = 90;
 const ndip = document.getElementById('nightdip');
 const dock = document.getElementById('dock');
@@ -1922,17 +1926,22 @@ function frame(now){
     stLabel.style.top = (front - 5).toFixed(1) + 'px';
   }
 
-  // idle: nothing moving, so don't burn a composite (keeps thermals down, which
-  // is what actually keeps long scrolls smooth on laptops)
-  // Atmospheric motion is continuous on desktop. On mobile it animates while
-  // scrolling/dragging and briefly afterward, then rests to preserve thermal
-  // headroom for the next gesture.
+  // Interactive motion renders at display cadence. Desktop atmosphere remains
+  // continuous; idle mobile atmosphere is deliberately capped at 18 fps so the
+  // smoke stays alive without returning to a permanent full-rate GPU workload.
   const onScreen = trackBottom > 0;
   const moving = dragging || Math.abs(swayCur) > 0.01 || Math.abs(target - p) > 1e-4 ||
                  Math.abs(mx - smx) > 1e-3 || Math.abs(my - smy) > 1e-3 ||
                  Math.abs(dragAzT - sDragAz) > 0.02 || Math.abs(dragAltT - sDragAlt) > 0.02 ||
                  (smokeAlpha > 0.004 && onScreen && !MOBILE_RENDER_BUDGET);
   if (moving) renderFor = 45;
+  const renderNow = now || performance.now();
+  const mobileAtmosphereDue = MOBILE_RENDER_BUDGET && live && onScreen &&
+    renderNow - mobileIdleAtmosphereAt >= MOBILE_IDLE_ATMOSPHERE_MS;
+  if (mobileAtmosphereDue) {
+    mobileIdleAtmosphereAt = renderNow;
+    renderFor = Math.max(renderFor, 1);
+  }
   if (renderFor > 0) {
     if (gate && GLASSES[glassIdx][2].blur) renderBg();
     composer.render(); renderFor--;
