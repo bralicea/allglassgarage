@@ -3,7 +3,6 @@ import { GLTFLoader } from './vendor/GLTFLoader.js';
 import { EffectComposer } from './post/EffectComposer.js';
 import { RenderPass } from './post/RenderPass.js';
 import { UnrealBloomPass } from './post/UnrealBloomPass.js';
-import { OutputPass } from './post/OutputPass.js';
 import { ShaderPass } from './post/ShaderPass.js';
 
 try {
@@ -121,10 +120,25 @@ function buildEnv() {
   bank(0.7, 8, .2, -8.5, 2.2,  6, 0xfff4e4, 1.8);   //   every beat catches a streak
   bank(9, 0.35, .2,  0.5, 0.35, 9, 0xffedd8, 1.6);  // warm floor-bounce line, low
   const pm = new THREE.PMREMGenerator(renderer);
-  const tex = pm.fromScene(s, 0.03).texture;
-  return tex;
+  const target = pm.fromScene(s, 0.03);
+  /* The convolved target is the environment we retain. The source scene and
+     PMREM compiler resources have finished their one job; explicitly release
+     them so mobile GPUs do not carry dead geometry, materials and canvases for
+     the rest of the page's lifetime. */
+  pm.dispose();
+  s.traverse(object => {
+    object.geometry?.dispose();
+    const materials = Array.isArray(object.material) ? object.material : [object.material];
+    for (const material of materials) {
+      if (!material) continue;
+      material.map?.dispose();
+      material.dispose();
+    }
+  });
+  return target;
 }
-scene.environment = buildEnv();
+const environmentTarget = buildEnv();
+scene.environment = environmentTarget.texture;
 scene.environmentIntensity = 1.5;
 
 /* practical lights for shape + a hard-ish rim */
@@ -244,23 +258,42 @@ glow.renderOrder = -0.7;   // over the far bank (24 m) - the wall sits at 11 m
    roughness break-up gives powder-coated steel something to catch light on. ---- */
 function microMaps() {
   const S = 512;
-  const nc = document.createElement('canvas'); nc.width = nc.height = S;
-  const rc = document.createElement('canvas'); rc.width = rc.height = S;
-  const ng = nc.getContext('2d'), rg = rc.getContext('2d');
-  const nd = ng.createImageData(S,S), rd = rg.createImageData(S,S);
+  const nd = new Uint8Array(S * S * 4), rd = new Uint8Array(S * S * 2);
+  /* Math.random() was called more than half a million times here during the
+     critical startup path. A tiny deterministic xorshift generator has the
+     same uniform noise distribution, but is substantially cheaper and makes
+     the powder-coat maps stable across reloads and visual regression tests. */
+  let seed = 0x6d2b79f5;
+  const random = () => {
+    seed ^= seed << 13; seed ^= seed >>> 17; seed ^= seed << 5;
+    return (seed >>> 0) / 4294967296;
+  };
   for (let i = 0; i < S*S; i++) {
-    const n = (Math.random()*2-1);
+    const n = random() * 2 - 1;
     const o = i*4;
-    nd.data[o]   = 128 + n*10;          // tangent-space X
-    nd.data[o+1] = 128 + (Math.random()*2-1)*10;
-    nd.data[o+2] = 255; nd.data[o+3] = 255;
+    nd[o]   = 128 + n*10;          // tangent-space X
+    nd[o+1] = 128 + (random()*2-1)*10;
+    nd[o+2] = 255; nd[o+3] = 255;
     const v = 150 + n*26;
-    rd.data[o] = rd.data[o+1] = rd.data[o+2] = v; rd.data[o+3] = 255;
+    const ro = i * 2;
+    /* roughnessMap reads green; RG keeps that channel while halving this
+       texture's storage versus its former canvas-backed RGBA allocation. */
+    rd[ro] = rd[ro+1] = v;
   }
-  ng.putImageData(nd,0,0); rg.putImageData(rd,0,0);
-  const mk = (c, rep) => { const t = new THREE.CanvasTexture(c);
-    t.wrapS = t.wrapT = THREE.RepeatWrapping; t.repeat.set(rep, rep); return t; };
-  return { normal: mk(nc, 26), rough: mk(rc, 18) };
+  const mk = (data, format, rep) => {
+    const texture = new THREE.DataTexture(data, S, S, format);
+    texture.wrapS = texture.wrapT = THREE.RepeatWrapping;
+    texture.repeat.set(rep, rep);
+    texture.generateMipmaps = true;
+    texture.minFilter = THREE.LinearMipmapLinearFilter;
+    texture.magFilter = THREE.LinearFilter;
+    texture.needsUpdate = true;
+    return texture;
+  };
+  return {
+    normal: mk(nd, THREE.RGBAFormat, 26),
+    rough: mk(rd, THREE.RGFormat, 18),
+  };
 }
 const MICRO = microMaps();
 
@@ -708,10 +741,15 @@ function loadBackdropImage(image, url, complete, failed) {
 }
 let dayAssetRequested = false, dayTextureLoaded = false;
 let nightAssetRequested = false, nightTextureLoaded = false;
+let dayAssetUrl = '', nightAssetUrl = '';
+function backdropAssetUrl(image, fallback) {
+  const compact = matchMedia('(max-width:760px)').matches;
+  return (compact && image.dataset.mobileSrc) || image.dataset.src || fallback;
+}
 function requestDayAsset() {
   if (dayAssetRequested) return;
   dayAssetRequested = true;
-  const url = bdA.dataset.src || 'assets/installed-coastal.webp';
+  const url = dayAssetUrl = backdropAssetUrl(bdA, 'assets/installed-coastal.webp');
   loadBackdropImage(bdA, url, texture => {
     bgQuadU.tA.value = texture;
     /* Until the deferred night plate arrives, frosted glass transmits the day
@@ -727,7 +765,7 @@ function requestDayAsset() {
 function requestNightAsset() {
   if (nightAssetRequested) return;
   nightAssetRequested = true;
-  const url = bdB.dataset.src || 'assets/coastal-night.webp';
+  const url = nightAssetUrl = backdropAssetUrl(bdB, 'assets/coastal-night.webp');
   loadBackdropImage(bdB, url, texture => {
     bgQuadU.tB.value = texture;
     nightTextureLoaded = true;
@@ -740,10 +778,12 @@ function requestNightAsset() {
 window.__dayAsset = {
   get requested() { return dayAssetRequested; },
   get loaded() { return dayTextureLoaded; },
+  get url() { return dayAssetUrl; },
 };
 window.__nightAsset = {
   get requested() { return nightAssetRequested; },
   get loaded() { return nightTextureLoaded; },
+  get url() { return nightAssetUrl; },
 };
 const bgQuad = new THREE.Mesh(
   new THREE.PlaneGeometry(2, 2),
@@ -841,34 +881,50 @@ loadComp(0, (rec) => {
 /* ---- bloom: glow only on the brightest specular hits ---- */
 const composer = new EffectComposer(renderer);
 const COMPOSER_SAMPLES = MOBILE_RENDER_BUDGET ? 2 : 4;
-composer.renderTarget1.samples = COMPOSER_SAMPLES;
+/* RenderPass and bloom both operate in readBuffer (renderTarget2). With the
+   final output/grade now fused straight to screen, writeBuffer is never drawn
+   into and no longer needs an unused multisample allocation. */
+composer.renderTarget1.samples = 0;
 composer.renderTarget2.samples = COMPOSER_SAMPLES;
 window.__renderProfile = {
   mobile: MOBILE_RENDER_BUDGET, dprCap: RENDER_DPR_CAP, samples: COMPOSER_SAMPLES,
   quality: MOBILE_RENDER_BUDGET ? (MOBILE_QUALITY_BASELINE ? 'baseline' : 'midpoint') : 'desktop',
   idleAtmosphereFps: MOBILE_RENDER_BUDGET ? MOBILE_IDLE_ATMOSPHERE_FPS : 60,
+  fusedOutputGrade: true,
 };
 composer.addPass(new RenderPass(scene, camera));
 const bloom = new UnrealBloomPass(new THREE.Vector2(1,1), 0.16, 0.45, 0.95);
 composer.addPass(bloom);
-composer.addPass(new OutputPass());
-/* the unifier: fine animated grain + a gentle vignette, applied after tone
-   mapping so every layer — sharp product, soft smoke, flat UI-adjacent black —
-   picks up the same photographic texture and the corners lean the eye inward. */
+/* OutputPass and the grade used to be two full-screen passes separated by a
+   half-float, multisampled buffer. This shader performs the exact same order
+   in one pass: ACES exposure, sRGB transfer, then vignette and photographic
+   grain. It renders directly to screen, avoiding an entire full-resolution
+   pass and resolve without changing scene quality. */
 const grade = new ShaderPass({
-  uniforms: { tDiffuse: { value: null }, uTime: { value: 0 } },
+  uniforms: {
+    tDiffuse: { value: null },
+    toneMappingExposure: { value: renderer.toneMappingExposure },
+    uTime: { value: 0 },
+  },
   vertexShader: 'varying vec2 vUv; void main(){ vUv = uv; gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0); }',
   fragmentShader: `
-    varying vec2 vUv; uniform sampler2D tDiffuse; uniform float uTime;
+    varying vec2 vUv; uniform sampler2D tDiffuse;
+    uniform float uTime;
     float gr(vec2 p){ return fract(sin(dot(p, vec2(12.9898, 78.233))) * 43758.5453); }
     void main(){
       vec4 c = texture2D(tDiffuse, vUv);
+      c.rgb = ACESFilmicToneMapping(c.rgb);
+      c = sRGBTransferOETF(c);
       float v = smoothstep(0.62, 1.08, length((vUv - 0.5) * vec2(1.15, 1.0)));
       c.rgb *= 1.0 - 0.20 * v;
       c.rgb += (gr(vUv * 917.0 + fract(uTime * 0.613) * 7.3) - 0.5) * 0.028;
       gl_FragColor = c;
     }`,
 });
+/* It is the terminal screen pass. Prevent EffectComposer from swapping its
+   internal buffers afterward, which keeps every scene frame on the dedicated
+   multisampled read target instead of alternating with the unused buffer. */
+grade.needsSwap = false;
 composer.addPass(grade);
 /* nightfall on the gate itself: the aluminum takes a warm kiss from the
    landscape uplights and bloom opens up so the highlights carry. The glass
@@ -1534,8 +1590,13 @@ function layoutBackdrop() {
 }
 addEventListener('resize', resize); cacheBeatOffsets(); resize();
 
-let lastT = performance.now();
+let lastT = performance.now(), frameRequest = 0;
+let contactSceneFrozen = false, composedFrameCount = 0;
+function scheduleFrame() {
+  if (!frameRequest && !document.hidden) frameRequest = requestAnimationFrame(frame);
+}
 function frame(now){
+  frameRequest = 0;
   if (lenis) lenis.raf(now);
   /* Smoothing was a fixed fraction PER FRAME, so it ran at different speeds on
      60 Hz vs 120 Hz and hitched whenever a frame was dropped. Now it is solved
@@ -1965,13 +2026,36 @@ function frame(now){
     mobileIdleAtmosphereAt = renderNow;
     renderFor = Math.max(renderFor, 1);
   }
-  if (renderFor > 0) {
+  /* Once Contact is fully established, its translucent frost still shows the
+     final gate frame but nothing behind it is moving. Freeze that exact frame
+     instead of redrawing it throughout the long mobile contact sheet. Any
+     reverse scroll changes target immediately, unfreezes, and renders in the
+     same animation frame. */
+  contactSceneFrozen = closeK >= 0.9999 && Math.abs(target - p) <= 1e-4 && !dragging;
+  if (contactSceneFrozen) renderFor = 0;
+  if (renderFor > 0 && !contactSceneFrozen) {
     if (gate && GLASSES[glassIdx][2].blur) renderBg();
-    composer.render(); renderFor--;
+    grade.uniforms.toneMappingExposure.value = renderer.toneMappingExposure;
+    composer.render(); renderFor--; composedFrameCount++;
   }
-  requestAnimationFrame(frame);
+  scheduleFrame();
 }
-requestAnimationFrame(frame);
+window.__renderState = {
+  get contactFrozen() { return contactSceneFrozen; },
+  get composedFrames() { return composedFrameCount; },
+  get pageHidden() { return document.hidden; },
+};
+document.addEventListener('visibilitychange', () => {
+  if (document.hidden) {
+    if (frameRequest) cancelAnimationFrame(frameRequest);
+    frameRequest = 0;
+  } else {
+    lastT = performance.now();
+    invalidate();
+    scheduleFrame();
+  }
+});
+scheduleFrame();
 } catch (error) {
   console.error('Interactive 3D initialization failed.', error);
   window.__showGateFallback?.();
