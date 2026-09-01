@@ -51,7 +51,7 @@ const MOBILE_QUALITY_BASELINE = MOBILE_RENDER_BUDGET &&
    nominal 3x sample count is not portable across mobile WebGL drivers. The
    mq=baseline comparison switch leaves normal visitors on the 1.55 default. */
 const RENDER_DPR_CAP = MOBILE_RENDER_BUDGET ? (MOBILE_QUALITY_BASELINE ? 1.35 : 1.55) : 1.75;
-const MOBILE_IDLE_ATMOSPHERE_FPS = 18;
+const MOBILE_IDLE_ATMOSPHERE_FPS = 24;
 const MOBILE_IDLE_ATMOSPHERE_MS = 1000 / MOBILE_IDLE_ATMOSPHERE_FPS;
 /* Lenis smooths the WHEEL itself — browsers deliver it in ~100 px notches, and
    no amount of downstream easing hides a stepped input entirely. Native-scroll
@@ -1935,7 +1935,7 @@ function frame(now){
   }
 
   // Interactive motion renders at display cadence. Desktop atmosphere remains
-  // continuous; idle mobile atmosphere is deliberately capped at 18 fps so the
+  // continuous; idle mobile atmosphere is deliberately capped at 24 fps so the
   // smoke stays alive without returning to a permanent full-rate GPU workload.
   const onScreen = trackBottom > 0;
   const moving = dragging || Math.abs(swayCur) > 0.01 || Math.abs(target - p) > 1e-4 ||
