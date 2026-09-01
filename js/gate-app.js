@@ -1363,6 +1363,7 @@ addEventListener('mousemove', e => { mx=(e.clientX/innerWidth-.5)*2; my=(e.clien
 let dragAzT = 0, dragAltT = 0, sDragAz = 0, sDragAlt = 0, dragGain = 0;
 let dragging = false, dragPX = 0, dragPY = 0, dragTravel = 0, lastHint = -1, grabCur = null;
 let dragCandidate = null, dragPointerType = '';
+let touchDragStartX = 0, touchDragStartAz = 0;
 const draghint = document.getElementById('draghint');
 const dhHand = draghint.querySelector('.dh-hand');
 const dhAmp = matchMedia('(pointer:coarse)').matches ? 13 : 9;
@@ -1370,6 +1371,10 @@ let swayK = 1, swayCur = 0;
 function beginDrag(e, x = e.clientX, y = e.clientY) {
   dragging = true; dragPointerType = e.pointerType;
   dragPX = x; dragPY = y;
+  if (e.pointerType === 'touch') {
+    touchDragStartX = x;
+    touchDragStartAz = sDragAz;
+  }
   stage.setPointerCapture(e.pointerId);
   stage.style.cursor = 'grabbing';
   e.preventDefault();
@@ -1404,7 +1409,17 @@ stage.addEventListener('pointermove', e => {
   /* grab metaphor: the surface follows the pointer, so both angles run
      against the drag. Clamps keep the smoke planes and floor honest. */
   const touch = dragPointerType === 'touch';
-  dragAzT  = Math.min(55, Math.max(-55, dragAzT - dx * (touch ? 0.34 : 0.22)));
+  if (touch) {
+    /* Touch must be genuinely direct-manipulation. Previously the finger
+       advanced dragAzT while the visible sDragAz eased behind it; reversing
+       first had to consume that hidden backlog, so the gate kept moving the
+       wrong way. Move both angles together so the next signed delta always
+       reverses the visible gate immediately. */
+    const directAz = touchDragStartAz - (e.clientX - touchDragStartX) * 0.34;
+    dragAzT = sDragAz = Math.min(55, Math.max(-55, directAz));
+  } else {
+    dragAzT = Math.min(55, Math.max(-55, dragAzT - dx * 0.22));
+  }
   /* A touch swipe owns only the horizontal orbit; pitch remains a mouse/pen
      refinement so diagonal fingers do not fight vertical page movement. */
   if (!touch) dragAltT = Math.min(6, Math.max(-28, dragAltT - dy * 0.16));
